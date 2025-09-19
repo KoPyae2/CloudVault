@@ -1,36 +1,130 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# CloudVault — Open Source Cloud Storage (Next.js + Convex + Telegram)
+
+CloudVault is an open source, privacy‑minded file manager built on the modern web stack. Files are stored in Telegram via a bot (as encrypted chunks), while metadata and queries are powered by Convex. The UI is a responsive Next.js app with optimistic updates and a rich upload experience.
+
+## Tech Stack
+- **Framework**: Next.js 15 (App Router) + React 19
+- **Styling**: Tailwind CSS v4
+- **State**: Zustand (persisted client store with optimistic updates)
+- **Auth**: NextAuth.js (Google provider)
+- **Backend DB/Queries**: Convex (TypeScript schema + serverless mutations/queries)
+- **Storage**: Telegram Bot API (document uploads as encrypted 5MB chunks)
+- **Images/Video**: Sharp (thumbnails), optional Telegram previews
+- **UI primitives**: Radix UI + shadcn-inspired components
+- **Icons**: lucide-react
+
+## Key Features
+- **Folder/file manager** with breadcrumbs and selection
+- **Chunked uploads** with pause/resume/cancel and real‑time progress
+- **Optimistic UI**: files appear instantly while Convex snapshot catches up
+- **Telegram-backed storage**: data redundancy without S3 costs
+- **Google Sign‑In** via NextAuth
+
+## Repository Structure
+```
+app/                      # Next.js App Router routes
+  api/                    # Next Route Handlers (server)
+    files/create/         # Create file metadata in Convex
+    telegram/             # Upload, image-upload, preview, thumbnail, etc.
+convex/                   # Convex schema and functions (queries/mutations)
+components/               # UI components (Navbar, File Manager, Upload)
+lib/                      # Client libs (auth, store, telegram)
+public/                   # Static assets
+```
+
+## How Storage Works (High Level)
+1. Client splits files into 5MB chunks (or server does for images) and sends them to a Next.js route.
+2. Route uses a **Telegram bot** to `sendDocument` for each chunk. Chunks are AES-256-CBC encrypted client/server-side.
+3. Convex stores file metadata: name, size, mimetype, and Telegram chunk references (with integrity hashes).
+4. Downloads reassemble chunks by fetching from Telegram and decrypting.
 
 ## Getting Started
 
-First, run the development server:
+### 1) Prerequisites
+- Node.js 18+
+- A Telegram Bot Token (via @BotFather)
+- A Telegram Channel ID where the bot can post (add bot as admin)
+- A Convex project (https://www.convex.dev/)
+- Google OAuth Client (for NextAuth)
 
+### 2) Environment Variables
+Create `.env.local` in the project root:
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+# NextAuth
+NEXTAUTH_SECRET=your-strong-random-secret
+GOOGLE_CLIENT_ID=your-google-client-id
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+
+# Convex (public URL used by client)
+NEXT_PUBLIC_CONVEX_URL=https://your-convex-deployment.convex.cloud
+
+# Telegram
+NEXT_TELEGRAM_BOT_TOKEN=123456:abcdef-your-bot-token
+NEXT_TELEGRAM_CHANNEL_ID=@your_channel_or_numeric_id
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Notes:
+- Use a secure random `NEXTAUTH_SECRET`.
+- `NEXT_PUBLIC_CONVEX_URL` should point to your Convex deployment (dev or prod).
+- For channel ID, you can use `@channelusername` or the numeric ID (ensure the bot is an admin).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 3) Install & Dev
+```bash
+npm install
+npm run dev
+```
+Then open http://localhost:3000
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 4) Convex Setup
+- Install Convex CLI: `npm i -g convex`
+- In the repo root, run `npx convex dev` (or deploy to get a hosted URL)
+- Ensure your Convex deployment URL is set as `NEXT_PUBLIC_CONVEX_URL`
 
-## Learn More
+### 5) Google OAuth
+- Create OAuth credentials in Google Cloud Console
+- Set authorized origins/callbacks to your dev/prod domains
+- Put client ID/secret into `.env.local`
 
-To learn more about Next.js, take a look at the following resources:
+## Scripts
+- `npm run dev` — Next dev (Turbopack)
+- `npm run build` — Next build (Turbopack)
+- `npm run start` — Next start (production)
+- `npm run lint` — ESLint
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Important Files
+- `lib/telegram.ts` — Telegram storage client
+  - Retries with exponential backoff for 429/5xx
+  - AES-256-CBC chunk encryption + integrity hash
+- `convex/schema.ts` — Data model (users, folders, files, indices)
+- `convex/files.ts` — Create, move, copy, rename, delete, list files
+- `components/upload-manager.tsx` — Upload control, pause/resume, optimistic add
+- `components/upload-progress.tsx` — Dialog UI for active/completed uploads
+- `lib/store.ts` — Zustand store with `isOptimistic` support and scoped replace
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Deploy
+- Frontend: Vercel (Recommended for Next.js 15)
+- Backend: Convex deployment (link URL via `NEXT_PUBLIC_CONVEX_URL`)
+- Telegram Bot: Hosted anywhere (Next functions run on Vercel). Ensure API access is allowed.
 
-## Deploy on Vercel
+Environment variables must be configured in your hosting provider.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Rate Limits & Resilience
+- Telegram API can return 429/5xx. Uploads use retries with jitter and per‑attempt timeouts.
+- Client inter‑chunk delay adapts slightly to reduce rate limiting.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Security
+- Files are chunk‑encrypted with per‑chunk keys derived from a random fileId + secret.
+- Only metadata is kept in Convex; actual file bytes live in Telegram.
+- Use HTTPS everywhere in production and secure your env vars.
+
+## Roadmap Ideas
+- Public share links with scoped access
+- Full‑text search on metadata
+- Mobile PWA and offline queueing
+
+## Contributing
+- Fork the repo, create a feature branch, open a PR.
+- Please run `npm run lint` and ensure type checks pass.
+
+## License
+MIT — see LICENSE (or update to your preferred license).
