@@ -2,16 +2,12 @@
 
 import React from "react";
 import {
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-} from "@/components/ui/context-menu";
-import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { Edit, Move, Copy, Trash2, FileText } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Edit, Move, Copy, Trash2, FileText, Download } from "lucide-react";
 
 export type UnifiedMenuKind = "file" | "folder";
 
@@ -19,88 +15,154 @@ export interface UnifiedMenuProps {
   kind: UnifiedMenuKind;
   name: string;
   // Actions
+  onDownload?: () => void; // Only for files
   onRename: () => void;
   onMove: () => void;
   onCopy: () => void;
   onDelete: () => void;
   onProperties: () => void;
-  as: "context" | "dropdown";
 }
 
-// Internal render for items
-function MenuItems({ onRename, onMove, onCopy, onDelete, onProperties }: Omit<UnifiedMenuProps, "kind" | "name" | "as">) {
-  return (
-    <>
-      <MenuItem onClick={onRename} icon={<Edit className="h-4 w-4 mr-2" />}>Rename</MenuItem>
-      <MenuItem onClick={onMove} icon={<Move className="h-4 w-4 mr-2" />}>Move</MenuItem>
-      <MenuItem onClick={onCopy} icon={<Copy className="h-4 w-4 mr-2" />}>Copy</MenuItem>
-      <MenuItem onClick={onDelete} icon={<Trash2 className="h-4 w-4 mr-2" />} destructive>Delete</MenuItem>
-      <MenuItem onClick={onProperties} icon={<FileText className="h-4 w-4 mr-2" />}>Properties</MenuItem>
-    </>
-  );
-}
-
-// MenuItem abstraction for both Context and Dropdown
-function MenuItem({ onClick, icon, children, destructive }: { onClick: () => void; icon: React.ReactNode; children: React.ReactNode; destructive?: boolean }) {
-  // Render both variants depending on parent kind via React context detection is overkill; instead, we export two wrappers
-  return null;
-}
-
-// Context variant
-export function UnifiedContextMenuContent(props: UnifiedMenuProps) {
-  const { onRename, onMove, onCopy, onDelete, onProperties } = props;
-  return (
-    <ContextMenuContent>
-      <ContextMenuItem onClick={onRename}>
-        <Edit className="h-4 w-4 mr-2" />
-        Rename
-      </ContextMenuItem>
-      <ContextMenuItem onClick={onMove}>
-        <Move className="h-4 w-4 mr-2" />
-        Move
-      </ContextMenuItem>
-      <ContextMenuItem onClick={onCopy}>
-        <Copy className="h-4 w-4 mr-2" />
-        Copy
-      </ContextMenuItem>
-      <ContextMenuSeparator />
-      <ContextMenuItem className="text-red-600" onClick={onDelete}>
-        <Trash2 className="h-4 w-4 mr-2" />
-        Delete
-      </ContextMenuItem>
-      <ContextMenuItem onClick={onProperties}>
-        <FileText className="h-4 w-4 mr-2" />
-        Properties
-      </ContextMenuItem>
-    </ContextMenuContent>
-  );
-}
-
-// Dropdown variant (3-dots)
+// Unified dropdown menu content for all interactions
 export function UnifiedDropdownMenuContent(props: UnifiedMenuProps) {
-  const { onRename, onMove, onCopy, onDelete, onProperties } = props;
+  const { kind, onDownload, onRename, onMove, onCopy, onDelete, onProperties } = props;
+  
   return (
     <DropdownMenuContent>
-      <DropdownMenuItem onClick={onRename}>
+      {/* Download option only for files */}
+      {kind === "file" && onDownload && (
+        <>
+          <DropdownMenuItem onClick={(e) => {
+            e.stopPropagation();
+            onDownload();
+          }}>
+            <Download className="h-4 w-4 mr-2" />
+            Download
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+        </>
+      )}
+      
+      <DropdownMenuItem onClick={(e) => {
+        e.stopPropagation();
+        onRename();
+      }}>
         <Edit className="h-4 w-4 mr-2" />
         Rename
       </DropdownMenuItem>
-      <DropdownMenuItem onClick={onMove}>
+      <DropdownMenuItem onClick={(e) => {
+        e.stopPropagation();
+        onMove();
+      }}>
         <Move className="h-4 w-4 mr-2" />
         Move
       </DropdownMenuItem>
-      <DropdownMenuItem onClick={onCopy}>
+      <DropdownMenuItem onClick={(e) => {
+        e.stopPropagation();
+        onCopy();
+      }}>
         <Copy className="h-4 w-4 mr-2" />
         Copy
       </DropdownMenuItem>
-      <DropdownMenuItem className="text-red-600" onClick={onDelete}>
-        <Trash2 className="h-4 w-4 mr-2" />
-        Delete
-      </DropdownMenuItem>
-      <DropdownMenuItem onClick={onProperties}>
+      <DropdownMenuItem onClick={(e) => {
+        e.stopPropagation();
+        onProperties();
+      }}>
         <FileText className="h-4 w-4 mr-2" />
         Properties
       </DropdownMenuItem>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem className="text-red-600" onClick={(e) => {
+        e.stopPropagation();
+        onDelete();
+      }}>
+        <Trash2 className="h-4 w-4 mr-2" />
+        Delete
+      </DropdownMenuItem>
     </DropdownMenuContent>
+  );
+}
+
+// Unified popover menu content for all interactions
+export function UnifiedPopoverMenuContent(props: UnifiedMenuProps) {
+  const { kind, onDownload, onRename, onMove, onCopy, onDelete, onProperties } = props;
+  
+  return (
+    <div className="w-48 p-1">
+      {/* Download option only for files */}
+      {kind === "file" && onDownload && (
+        <>
+          <Button
+            variant="ghost"
+            className="w-full justify-start h-8 px-2 text-sm"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDownload();
+            }}
+          >
+            <Download className="h-4 w-4 mr-2" />
+            Download
+          </Button>
+          <div className="h-px bg-border my-1" />
+        </>
+      )}
+      
+      <Button
+        variant="ghost"
+        className="w-full justify-start h-8 px-2 text-sm"
+        onClick={(e) => {
+          e.stopPropagation();
+          onRename();
+        }}
+      >
+        <Edit className="h-4 w-4 mr-2" />
+        Rename
+      </Button>
+      <Button
+        variant="ghost"
+        className="w-full justify-start h-8 px-2 text-sm"
+        onClick={(e) => {
+          e.stopPropagation();
+          onMove();
+        }}
+      >
+        <Move className="h-4 w-4 mr-2" />
+        Move
+      </Button>
+      <Button
+        variant="ghost"
+        className="w-full justify-start h-8 px-2 text-sm"
+        onClick={(e) => {
+          e.stopPropagation();
+          onCopy();
+        }}
+      >
+        <Copy className="h-4 w-4 mr-2" />
+        Copy
+      </Button>
+      <Button
+        variant="ghost"
+        className="w-full justify-start h-8 px-2 text-sm"
+        onClick={(e) => {
+          e.stopPropagation();
+          onProperties();
+        }}
+      >
+        <FileText className="h-4 w-4 mr-2" />
+        Properties
+      </Button>
+      <div className="h-px bg-border my-1" />
+      <Button
+        variant="ghost"
+        className="w-full justify-start h-8 px-2 text-sm text-red-600 hover:text-red-700 hover:bg-red-50"
+        onClick={(e) => {
+          e.stopPropagation();
+          onDelete();
+        }}
+      >
+        <Trash2 className="h-4 w-4 mr-2" />
+        Delete
+      </Button>
+    </div>
   );
 }

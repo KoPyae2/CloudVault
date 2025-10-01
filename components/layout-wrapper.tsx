@@ -1,6 +1,7 @@
 "use client";
 
 import { UploadManagerProvider } from './upload-manager';
+import { DownloadManagerProvider } from './download-manager';
 
 interface LayoutWrapperProps {
   children: React.ReactNode;
@@ -9,7 +10,9 @@ interface LayoutWrapperProps {
 export function LayoutWrapper({ children }: LayoutWrapperProps) {
   return (
     <UploadManagerProvider>
-      {children}
+      <DownloadManagerProvider>
+        {children}
+      </DownloadManagerProvider>
     </UploadManagerProvider>
   );
 }

@@ -4,10 +4,13 @@ import { telegramStorage } from '@/lib/telegram';
 // Direct image upload to Telegram, single request
 export async function POST(request: NextRequest) {
   try {
+    console.log('[API] Image upload request received');
+    console.log('[API] Request signal aborted:', request.signal?.aborted);
+    
     const formData = await request.formData();
     const file = formData.get('file');
-    const userId = formData.get('userId');
-    const folderId = formData.get('folderId');
+    // const userId = formData.get('userId');
+    // const folderId = formData.get('folderId');
 
     if (!(file instanceof Blob)) {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 });

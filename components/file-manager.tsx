@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { useSession } from "next-auth/react";
 import { useMutation, useQuery } from "convex/react";
 import { UploadDialog } from "./upload-dialog";
+import { useDownloadManager } from "./download-manager";
 import Navbar from "./navbar";
 import { Button } from "@/components/ui/button";
 import { useStore, type StoreState, type FileItem as StoreFileItem, type FolderItem as StoreFolderItem } from "@/lib/store";
@@ -18,29 +19,20 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { UnifiedContextMenuContent, UnifiedDropdownMenuContent } from "@/components/context-menu";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { UnifiedPopoverMenuContent } from "@/components/context-menu";
 import {
   Folder,
   File,
   Plus,
-  Edit,
+  // Edit,
   Copy,
   Move,
   Trash2,
-  Download,
+  // Download,
   ArrowLeft,
   Image as ImageIcon,
   FileText,
@@ -55,8 +47,7 @@ import {
   X,
   Home,
   ChevronRight,
-  RefreshCw,
-  Share,
+
 } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
@@ -81,24 +72,30 @@ const getFileIcon = (type: string) => {
 };
 
 // Simple in-memory cache to avoid refetching thumbnails during this session
-type GlobalWithThumbCache = typeof globalThis & { __thumbCache?: Map<string, string> };
-const g = globalThis as GlobalWithThumbCache;
-const thumbnailCache: Map<string, string> = g.__thumbCache || new Map();
+const g = globalThis as typeof globalThis & { __thumbCache?: Map<string, string> };
+const thumbnailCache = g.__thumbCache || new Map<string, string>();
 g.__thumbCache = thumbnailCache;
 
+// Props interface for MemoFileThumbnail component
+interface MemoFileThumbnailProps {
+  file: FileItem;
+  size?: string;
+  userId: string;
+}
+
 // Memoized thumbnail component to avoid remounts on list re-renders
-type ThumbProps = { file: FileItem; size?: string; userId?: Id<"users"> };
 const MemoFileThumbnail = React.memo(
-  function MemoFileThumbnail({ file, size = "h-12 w-12", userId }: ThumbProps) {
+  function MemoFileThumbnail({ file, size = "h-12 w-12", userId }: MemoFileThumbnailProps) {
     const [thumbnailUrl, setThumbnailUrl] = React.useState<string | null>(null);
     const [isLoading, setIsLoading] = React.useState(false);
     const [error, setError] = React.useState(false);
 
     const isImage = file.type.startsWith("image/");
-    const isVideo = file.type.startsWith("video/");
+    // const isVideo = file.type.startsWith("video/");
 
     React.useEffect(() => {
-      if (!isImage && !isVideo) return;
+      // Only generate thumbnails for images, not videos
+      if (!isImage) return;
 
       const cacheKey = `thumb:${file.telegramStorageId}`;
 
@@ -137,7 +134,7 @@ const MemoFileThumbnail = React.memo(
           });
           if (response.ok) {
             const blob = await response.blob();
-            const dataUrl: string = await new Promise((resolve, reject) => {
+            const dataUrl = await new Promise<string>((resolve, reject) => {
               const reader = new FileReader();
               reader.onloadend = () => resolve(reader.result as string);
               reader.onerror = reject;
@@ -160,9 +157,10 @@ const MemoFileThumbnail = React.memo(
       };
 
       generateThumbnail();
-    }, [file.telegramStorageId, file.type, isImage, isVideo,file.telegramChunks,userId]);
+    }, [file.telegramStorageId, file.type, isImage, file.telegramChunks, userId]);
 
-    if (isLoading && (isImage || isVideo)) {
+    // Show loading spinner only for images (since we don't generate thumbnails for videos)
+    if (isLoading && isImage) {
       return (
         <div
           className={`${size} bg-gray-100 rounded-lg flex items-center justify-center`}
@@ -172,7 +170,8 @@ const MemoFileThumbnail = React.memo(
       );
     }
 
-    if (thumbnailUrl && (isImage || isVideo)) {
+    // Show thumbnail only for images (and not in error state)
+    if (thumbnailUrl && isImage && !error) {
       return (
         <div
           className={`${size} relative rounded-lg overflow-hidden bg-gray-100`}
@@ -185,25 +184,11 @@ const MemoFileThumbnail = React.memo(
             className="w-full h-full object-cover"
             onError={() => setError(true)}
           />
-          {isVideo && (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="bg-black bg-opacity-50 rounded-full p-1">
-                <Video className="h-3 w-3 text-white" />
-              </div>
-            </div>
-          )}
         </div>
       );
     }
 
-    if (error || (!isImage && !isVideo)) {
-      return (
-        <div className={`${size} flex items-center justify-center`}>
-          {getFileIcon(file.type)}
-        </div>
-      );
-    }
-
+    // For videos, error states, and all other file types, show the appropriate icon
     return (
       <div className={`${size} flex items-center justify-center`}>
         {getFileIcon(file.type)}
@@ -218,6 +203,7 @@ const MemoFileThumbnail = React.memo(
 
 export function FileManager() {
   const { data: session } = useSession();
+  const { addDownload } = useDownloadManager();
 
   const currentFolderId = useStore((s: StoreState) => s.currentFolderId);
   const setCurrentFolderId = useStore((s: StoreState) => s.setCurrentFolderId);
@@ -240,6 +226,8 @@ export function FileManager() {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   // Floating selection menu open/close
   const [isSelectionMenuOpen, setIsSelectionMenuOpen] = useState(false);
+  // Popover menu state for menu buttons
+  const [popoverMenuOpen, setPopoverMenuOpen] = useState<string | null>(null);
   // search and sort come from Zustand now
   // search and sort removed
   // All files are uploaded to Telegram storage
@@ -286,43 +274,6 @@ export function FileManager() {
     setSelectedItems(new Set());
     setSelectionMode(false);
   };
-  const longPressTimeout = React.useRef<number | null>(null);
-  const startLongPress = (cb: () => void) => {
-    if (longPressTimeout.current) window.clearTimeout(longPressTimeout.current);
-    longPressTimeout.current = window.setTimeout(cb, 500);
-  };
-  const clearLongPress = () => {
-    if (longPressTimeout.current) {
-      window.clearTimeout(longPressTimeout.current);
-      longPressTimeout.current = null;
-    }
-  };
-  // openMobileActions removed; we open the standard context menu on long press now
-
-  // Long-press: state and opener (placed above any early returns)
-  const longPressTriggeredRef = React.useRef(false);
-  const openContextAtTarget = (
-    target?: Element | null,
-    beforeOpen?: () => void
-  ) => {
-    beforeOpen?.();
-    longPressTriggeredRef.current = true;
-    if (!(target instanceof Element)) {
-      return; // Target not available (unmounted or null)
-    }
-    const rect = target.getBoundingClientRect();
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
-    const evt = new MouseEvent("contextmenu", {
-      bubbles: true,
-      cancelable: true,
-      view: window,
-      clientX: x,
-      clientY: y,
-    });
-    target.dispatchEvent(evt);
-  };
-
 
   // Build children map for folder tree
   const childrenMap = React.useMemo(() => {
@@ -708,44 +659,6 @@ export function FileManager() {
     }
   };
 
-  const handleDownload = async (item: FileItem) => {
-    try {
-      // All files are stored in Telegram
-      const response = await fetch("/api/telegram/download", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          fileId: item.telegramStorageId,
-          userId: convexUser?._id,
-          chunks: item.telegramChunks || [],
-        }),
-      });
-
-      if (response.ok) {
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = item.name;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        window.URL.revokeObjectURL(url);
-      } else {
-        throw new Error("Failed to download from Telegram");
-      }
-    } catch (error) {
-      console.error("Error downloading file:", error);
-      alert(
-        `Download failed: ${error instanceof Error ? error.message : "Unknown error"}`
-      );
-    }
-  };
-
-  // All files are already stored in Telegram
-
   // Simple in-memory cache to avoid refetching thumbnails during this session
   type GlobalWithThumbCache = typeof globalThis & { __thumbCache?: Map<string, string> };
   const g = globalThis as GlobalWithThumbCache;
@@ -770,19 +683,22 @@ export function FileManager() {
     });
   };
 
-  // Filtered lists
-  const listFoldersIn = useStore((s: StoreState) => s.listFoldersIn);
-  const listFilesIn = useStore((s: StoreState) => s.listFilesIn);
-
-  const filteredFolders = React.useMemo(() => {
-    const arr = listFoldersIn(currentFolderId);
-    return arr;
-  }, [listFoldersIn, currentFolderId, foldersMap]);
-
-  const filteredFiles = React.useMemo(() => {
-    const arr = listFilesIn(currentFolderId);
-    return arr;
-  }, [listFilesIn, currentFolderId, filesMap]);
+  // Get all folders and files from store
+  const storeFolders = useStore((s: StoreState) => s.folders);
+  const storeFiles = useStore((s: StoreState) => s.files);
+  
+  // Filter them with useMemo to avoid recalculation on every render
+  const filteredFolders = React.useMemo(() => 
+    Object.values(storeFolders).filter((f) => 
+      String(f.parentId || '') === String(currentFolderId || '')
+    ), [storeFolders, currentFolderId]
+  );
+  
+  const filteredFiles = React.useMemo(() => 
+    Object.values(storeFiles).filter((f) => 
+      String(f.folderId || '') === String(currentFolderId || '')
+    ), [storeFiles, currentFolderId]
+  );
 
   if (!session?.user || !convexUser) {
     return (
@@ -948,34 +864,17 @@ export function FileManager() {
           </div>
         ) : viewMode === "grid" ? (
           <div className="grid grid-cols-2 xs:grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-3 sm:gap-4">
-            {filteredFolders.map((folder: FolderItem) => (
-              <ContextMenu key={folder._id}>
-                <ContextMenuTrigger>
+            {filteredFolders.map((folder: FolderItem) => {
+              const folderId = String(folder._id);
+              return (
+                <div key={folder._id} className="relative">
                   <div
                     className="relative file-grid-item flex flex-col items-center p-3 sm:p-4 rounded-lg border bg-white hover:bg-gray-50 cursor-pointer group"
                     onClick={() => {
-                      if (longPressTriggeredRef.current) {
-                        longPressTriggeredRef.current = false;
-                        return;
-                      }
                       return selectionMode
-                        ? toggleSelect("folder", String(folder._id))
+                        ? toggleSelect("folder", folderId)
                         : setCurrentFolderId(folder._id);
                     }}
-                    onContextMenu={() => {
-                      clearSelection();
-                      setSelectedItem(folder);
-                    }}
-                    onTouchStart={(e) =>
-                      startLongPress(() =>
-                        openContextAtTarget(e.currentTarget, () => {
-                          clearSelection();
-                          setSelectedItem(folder);
-                        })
-                      )
-                    }
-                    onTouchEnd={clearLongPress}
-                    onTouchCancel={clearLongPress}
                   >
                     {selectionMode && (
                       <input
@@ -990,6 +889,60 @@ export function FileManager() {
                         onClick={(e) => e.stopPropagation()}
                       />
                     )}
+                    
+                    {/* Menu button in top-right corner - always visible */}
+                    <Popover 
+                      open={popoverMenuOpen === folderId}
+                      onOpenChange={(open) => setPopoverMenuOpen(open ? folderId : null)}
+                    >
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="absolute top-1 right-1 h-6 w-6 p-0"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            clearSelection();
+                            setSelectedItem(folder);
+                          }}
+                        >
+                          <MoreVertical className="h-3 w-3" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="end">
+                        <UnifiedPopoverMenuContent
+                          kind="folder"
+                          name={folder.name}
+                          onRename={() => {
+                            setSelectedItem(folder);
+                            setIsRenameOpen(true);
+                            setNewName(folder.name);
+                            setPopoverMenuOpen(null);
+                          }}
+                          onMove={() => {
+                            setSelectedItem(folder);
+                            setIsMoveOpen(true);
+                            setPopoverMenuOpen(null);
+                          }}
+                          onCopy={() => {
+                            setSelectedItem(folder);
+                            setIsCopyOpen(true);
+                            setPopoverMenuOpen(null);
+                          }}
+                          onDelete={() => {
+                            setSelectedItem(folder);
+                            setIsDeleteOpen(true);
+                            setPopoverMenuOpen(null);
+                          }}
+                          onProperties={() => {
+                            setSelectedItem(folder);
+                            setIsPropertiesOpen(true);
+                            setPopoverMenuOpen(null);
+                          }}
+                        />
+                      </PopoverContent>
+                    </Popover>
+                    
                     <Folder className="h-12 w-12 text-emerald-600 mb-3 group-hover:text-emerald-700" />
                     <span className="text-xs sm:text-sm text-center truncate w-full font-medium">
                       {folder.name}
@@ -1004,63 +957,20 @@ export function FileManager() {
                         <div>{formatDate(folder.createdAt)}</div>
                       )}
                     </div>
-                  </div>
-                </ContextMenuTrigger>
-                <UnifiedContextMenuContent
-                  as="context"
-                  kind="folder"
-                  name={folder.name}
-                  onRename={() => {
-                    setSelectedItem(folder);
-                    setIsRenameOpen(true);
-                    setNewName(folder.name);
-                  }}
-                  onMove={() => {
-                    setSelectedItem(folder);
-                    setIsMoveOpen(true);
-                  }}
-                  onCopy={() => {
-                    setSelectedItem(folder);
-                    setIsCopyOpen(true);
-                  }}
-                  onDelete={() => {
-                    setSelectedItem(folder);
-                    setIsDeleteOpen(true);
-                  }}
-                  onProperties={() => {
-                    setSelectedItem(folder);
-                    setIsPropertiesOpen(true);
-                  }}
-                />
-              </ContextMenu>
-            ))}
+                    </div>
+                </div>
+              );
+            })}
 
-            {filteredFiles.map((file: FileItem) => (
-              <ContextMenu key={file._id}>
-                <ContextMenuTrigger>
+            {filteredFiles.map((file: FileItem) => {
+              const fileId = String(file._id);
+              return (
+                <div key={file._id} className="relative">
                   <div
                     className="relative file-grid-item flex flex-col items-center p-3 sm:p-4 rounded-lg border bg-white hover:bg-gray-50 cursor-pointer group"
-                    onContextMenu={() => {
-                      clearSelection();
-                      setSelectedItem(file);
-                    }}
-                    onTouchStart={(e) =>
-                      startLongPress(() =>
-                        openContextAtTarget(e.currentTarget, () => {
-                          clearSelection();
-                          setSelectedItem(file);
-                        })
-                      )
-                    }
-                    onTouchEnd={clearLongPress}
-                    onTouchCancel={clearLongPress}
                     onClick={() => {
-                      if (longPressTriggeredRef.current) {
-                        longPressTriggeredRef.current = false;
-                        return;
-                      }
                       return selectionMode
-                        ? toggleSelect("file", String(file._id))
+                        ? toggleSelect("file", fileId)
                         : undefined;
                     }}
                   >
@@ -1075,6 +985,71 @@ export function FileManager() {
                         onClick={(e) => e.stopPropagation()}
                       />
                     )}
+                    
+                    {/* Menu button in top-right corner - always visible */}
+                    <Popover 
+                      open={popoverMenuOpen === fileId}
+                      onOpenChange={(open) => setPopoverMenuOpen(open ? fileId : null)}
+                    >
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="absolute top-1 right-1 h-6 w-6 p-0"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            clearSelection();
+                            setSelectedItem(file);
+                          }}
+                        >
+                          <MoreVertical className="h-3 w-3" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="end">
+                        <UnifiedPopoverMenuContent
+                          kind="file"
+                          name={file.name}
+                          onDownload={() => {
+                            addDownload(
+                              file._id,
+                              file.name,
+                              file.size,
+                              file.type,
+                              file.telegramStorageId,
+                              file.telegramChunks || []
+                            );
+                            setPopoverMenuOpen(null);
+                          }}
+                          onRename={() => {
+                            setSelectedItem(file);
+                            setIsRenameOpen(true);
+                            setNewName(file.name);
+                            setPopoverMenuOpen(null);
+                          }}
+                          onMove={() => {
+                            setSelectedItem(file);
+                            setIsMoveOpen(true);
+                            setPopoverMenuOpen(null);
+                          }}
+                          onCopy={() => {
+                            setSelectedItem(file);
+                            setIsCopyOpen(true);
+                            setPopoverMenuOpen(null);
+                          }}
+                          onDelete={() => {
+                            setSelectedItem(file);
+                            setIsDeleteOpen(true);
+                            setPopoverMenuOpen(null);
+                          }}
+                          onProperties={() => {
+                            setSelectedItem(file);
+                            setIsPropertiesOpen(true);
+                            setPopoverMenuOpen(null);
+                          }}
+                        />
+                      </PopoverContent>
+                    </Popover>
+                    
                     <div className="mb-3 group-hover:scale-110 transition-transform duration-200">
                       <MemoFileThumbnail
                         file={file}
@@ -1092,56 +1067,10 @@ export function FileManager() {
                     <span className="text-xs text-gray-400">
                       {formatDate(file.createdAt)}
                     </span>
-                  </div>
-                </ContextMenuTrigger>
-                <ContextMenuContent>
-                  <ContextMenuItem onClick={() => handleDownload(file)}>
-                    <Download className="h-4 w-4 mr-2" />
-                    Download
-                  </ContextMenuItem>
-                  <ContextMenuItem>
-                    <Share className="h-4 w-4 mr-2" />
-                    Share
-                  </ContextMenuItem>
-                  <ContextMenuSeparator />
-                  <ContextMenuItem
-                    onClick={() => {
-                      setSelectedItem(file);
-                      setIsRenameOpen(true);
-                      setNewName(file.name);
-                    }}
-                  >
-                    <Edit className="h-4 w-4 mr-2" />
-                    Rename
-                  </ContextMenuItem>
-                  <ContextMenuItem
-                    onClick={() => {
-                      setSelectedItem(file);
-                      setIsMoveOpen(true);
-                    }}
-                  >
-                    <Move className="h-4 w-4 mr-2" />
-                    Move
-                  </ContextMenuItem>
-                  <ContextMenuItem onClick={() => handleCopy(undefined)}>
-                    <Copy className="h-4 w-4 mr-2" />
-                    Copy
-                  </ContextMenuItem>
-
-                  <ContextMenuSeparator />
-                  <ContextMenuItem
-                    className="text-red-600"
-                    onClick={() => {
-                      setSelectedItem(file);
-                      setIsDeleteOpen(true);
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Delete
-                  </ContextMenuItem>
-                </ContextMenuContent>
-              </ContextMenu>
-            ))}
+                    </div>
+                </div>
+              );
+            })}
           </div>
         ) : (
           /* List View */
@@ -1153,34 +1082,17 @@ export function FileManager() {
               <div className="col-span-1"></div>
             </div>
 
-            {filteredFolders.map((folder: FolderItem) => (
-              <ContextMenu key={folder._id}>
-                <ContextMenuTrigger>
-                  <div
-                    className="file-list-item grid grid-cols-12 gap-4 p-4 border-b cursor-pointer"
+            {filteredFolders.map((folder: FolderItem) => {
+              const folderId = String(folder._id);
+              return (
+                <div key={folder._id} className="file-list-item grid grid-cols-12 gap-4 p-4 border-b cursor-pointer">
+                  <div 
+                    className="col-span-11 grid grid-cols-11 gap-4"
                     onClick={() => {
-                      if (longPressTriggeredRef.current) {
-                        longPressTriggeredRef.current = false;
-                        return;
-                      }
                       return selectionMode
-                        ? toggleSelect("folder", String(folder._id))
+                        ? toggleSelect("folder", folderId)
                         : setCurrentFolderId(folder._id);
                     }}
-                    onContextMenu={() => {
-                      clearSelection();
-                      setSelectedItem(folder);
-                    }}
-                    onTouchStart={(e) =>
-                      startLongPress(() =>
-                        openContextAtTarget(e.currentTarget, () => {
-                          clearSelection();
-                          setSelectedItem(folder);
-                        })
-                      )
-                    }
-                    onTouchEnd={clearLongPress}
-                    onTouchCancel={clearLongPress}
                   >
                     <div className="col-span-6 flex items-center space-x-3">
                       {selectionMode && (
@@ -1214,134 +1126,66 @@ export function FileManager() {
                     <div className="col-span-3 text-xs sm:text-sm text-gray-500">
                       {formatDate(folder.createdAt)}
                     </div>
-                    <div className="col-span-1">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm">
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent>
-                          <DropdownMenuItem
-                            onClick={() => {
-                              setSelectedItem(folder);
-                              setIsRenameOpen(true);
-                              setNewName(folder.name);
-                            }}
-                          >
-                            <Edit className="h-4 w-4 mr-2" />
-                            Rename
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => {
-                              setSelectedItem(folder);
-                              setIsMoveOpen(true);
-                            }}
-                          >
-                            <Move className="h-4 w-4 mr-2" />
-                            Move
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => {
-                              setSelectedItem(folder);
-                              setIsCopyOpen(true);
-                            }}
-                          >
-                            <Copy className="h-4 w-4 mr-2" />
-                            Copy
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => {
-                              setSelectedItem(folder);
-                              setIsPropertiesOpen(true);
-                            }}
-                          >
-                            <FileText className="h-4 w-4 mr-2" />
-                            Properties
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            className="text-red-600"
-                            onClick={() => {
-                              setSelectedItem(folder);
-                              setIsDeleteOpen(true);
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4 mr-2" />
-                            Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
                   </div>
-                </ContextMenuTrigger>
-                <ContextMenuContent>
-                  <ContextMenuItem
-                    onClick={() => {
-                      setSelectedItem(folder);
-                      setIsRenameOpen(true);
-                      setNewName(folder.name);
-                    }}
-                  >
-                    <Edit className="h-4 w-4 mr-2" />
-                    Rename
-                  </ContextMenuItem>
-                  <ContextMenuItem
-                    onClick={() => {
-                      setSelectedItem(folder);
-                      setIsMoveOpen(true);
-                    }}
-                  >
-                    <Move className="h-4 w-4 mr-2" />
-                    Move
-                  </ContextMenuItem>
-                  <ContextMenuItem onClick={() => handleCopy(undefined)}>
-                    <Copy className="h-4 w-4 mr-2" />
-                    Copy
-                  </ContextMenuItem>
-                  <ContextMenuSeparator />
-                  <ContextMenuItem
-                    className="text-red-600"
-                    onClick={() => {
-                      setSelectedItem(folder);
-                      setIsDeleteOpen(true);
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Delete
-                  </ContextMenuItem>
-                </ContextMenuContent>
-              </ContextMenu>
-            ))}
+                  <div className="col-span-1">
+                    <Popover
+                      open={popoverMenuOpen === folderId}
+                      onOpenChange={(open) => setPopoverMenuOpen(open ? folderId : null)}
+                    >
+                      <PopoverTrigger asChild>
+                        <Button variant="ghost" size="sm">
+                          <MoreVertical className="h-4 w-4" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="end">
+                        <UnifiedPopoverMenuContent
+                          kind="folder"
+                          name={folder.name}
+                          onRename={() => {
+                            setSelectedItem(folder);
+                            setIsRenameOpen(true);
+                            setNewName(folder.name);
+                            setPopoverMenuOpen(null);
+                          }}
+                          onMove={() => {
+                            setSelectedItem(folder);
+                            setIsMoveOpen(true);
+                            setPopoverMenuOpen(null);
+                          }}
+                          onCopy={() => {
+                            setSelectedItem(folder);
+                            setIsCopyOpen(true);
+                            setPopoverMenuOpen(null);
+                          }}
+                          onDelete={() => {
+                            setSelectedItem(folder);
+                            setIsDeleteOpen(true);
+                            setPopoverMenuOpen(null);
+                          }}
+                          onProperties={() => {
+                            setSelectedItem(folder);
+                            setIsPropertiesOpen(true);
+                            setPopoverMenuOpen(null);
+                          }}
+                        />
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                </div>
+              );
+            })}
 
-            {filteredFiles.map((file: FileItem) => (
-              <ContextMenu key={file._id}>
-                <ContextMenuTrigger>
-                  <div
-                    className="file-list-item grid grid-cols-12 gap-4 p-4 border-b cursor-pointer"
+            {filteredFiles.map((file: FileItem) => {
+              const fileId = String(file._id);
+              return (
+                <div key={file._id} className="file-list-item grid grid-cols-12 gap-4 p-4 border-b cursor-pointer">
+                  <div 
+                    className="col-span-11 grid grid-cols-11 gap-4"
                     onClick={() => {
-                      if (longPressTriggeredRef.current) {
-                        longPressTriggeredRef.current = false;
-                        return;
-                      }
                       return selectionMode
-                        ? toggleSelect("file", String(file._id))
+                        ? toggleSelect("file", fileId)
                         : undefined;
                     }}
-                    onContextMenu={() => {
-                      clearSelection();
-                      setSelectedItem(file);
-                    }}
-                    onTouchStart={(e) =>
-                      startLongPress(() =>
-                        openContextAtTarget(e.currentTarget, () => {
-                          clearSelection();
-                          setSelectedItem(file);
-                        })
-                      )
-                    }
-                    onTouchEnd={clearLongPress}
-                    onTouchCancel={clearLongPress}
                   >
                     <div className="col-span-6 flex items-center space-x-3">
                       {selectionMode && (
@@ -1371,115 +1215,75 @@ export function FileManager() {
                     <div className="col-span-3 text-xs sm:text-sm text-gray-500">
                       {formatDate(file.createdAt)}
                     </div>
-                    <div className="col-span-1">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm">
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent>
-                          <DropdownMenuItem
-                            onClick={() => {
-                              setSelectedItem(file);
-                              setIsRenameOpen(true);
-                              setNewName(file.name);
-                            }}
-                          >
-                            <Edit className="h-4 w-4 mr-2" />
-                            Rename
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => {
-                              setSelectedItem(file);
-                              setIsMoveOpen(true);
-                            }}
-                          >
-                            <Move className="h-4 w-4 mr-2" />
-                            Move
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => {
-                              setSelectedItem(file);
-                              setIsCopyOpen(true);
-                            }}
-                          >
-                            <Copy className="h-4 w-4 mr-2" />
-                            Copy
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => {
-                              setSelectedItem(file);
-                              setIsPropertiesOpen(true);
-                            }}
-                          >
-                            <FileText className="h-4 w-4 mr-2" />
-                            Properties
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            className="text-red-600"
-                            onClick={() => {
-                              setSelectedItem(file);
-                              setIsDeleteOpen(true);
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4 mr-2" />
-                            Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
                   </div>
-                </ContextMenuTrigger>
-                <ContextMenuContent>
-                  <ContextMenuItem onClick={() => handleDownload(file)}>
-                    <Download className="h-4 w-4 mr-2" />
-                    Download
-                  </ContextMenuItem>
-                  <ContextMenuItem>
-                    <Share className="h-4 w-4 mr-2" />
-                    Share
-                  </ContextMenuItem>
-                  <ContextMenuSeparator />
-                  <ContextMenuItem
-                    onClick={() => {
-                      setSelectedItem(file);
-                      setIsRenameOpen(true);
-                      setNewName(file.name);
-                    }}
-                  >
-                    <Edit className="h-4 w-4 mr-2" />
-                    Rename
-                  </ContextMenuItem>
-                  <ContextMenuItem
-                    onClick={() => {
-                      setSelectedItem(file);
-                      setIsMoveOpen(true);
-                    }}
-                  >
-                    <Move className="h-4 w-4 mr-2" />
-                    Move
-                  </ContextMenuItem>
-                  <ContextMenuItem onClick={() => handleCopy(undefined)}>
-                    <Copy className="h-4 w-4 mr-2" />
-                    Copy
-                  </ContextMenuItem>
-
-                  <ContextMenuSeparator />
-                  <ContextMenuItem
-                    className="text-red-600"
-                    onClick={() => {
-                      setSelectedItem(file);
-                      setIsDeleteOpen(true);
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Delete
-                  </ContextMenuItem>
-                </ContextMenuContent>
-              </ContextMenu>
-            ))}
+                  <div className="col-span-1">
+                    <Popover 
+                      open={popoverMenuOpen === fileId} 
+                      onOpenChange={(open) => setPopoverMenuOpen(open ? fileId : null)}
+                    >
+                      <PopoverTrigger asChild>
+                        <Button 
+                          variant="ghost" 
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            clearSelection();
+                            setSelectedItem(file);
+                          }}
+                        >
+                          <MoreVertical className="h-4 w-4" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="end">
+                        <UnifiedPopoverMenuContent
+                          kind="file"
+                          name={file.name}
+                          onRename={() => {
+                            setSelectedItem(file);
+                            setIsRenameOpen(true);
+                            setNewName(file.name);
+                            setPopoverMenuOpen(null);
+                          }}
+                          onMove={() => {
+                            setSelectedItem(file);
+                            setIsMoveOpen(true);
+                            setPopoverMenuOpen(null);
+                          }}
+                          onCopy={() => {
+                            setSelectedItem(file);
+                            setIsCopyOpen(true);
+                            setPopoverMenuOpen(null);
+                          }}
+                          onDelete={() => {
+                            setSelectedItem(file);
+                            setIsDeleteOpen(true);
+                            setPopoverMenuOpen(null);
+                          }}
+                          onProperties={() => {
+                            setSelectedItem(file);
+                            setIsPropertiesOpen(true);
+                            setPopoverMenuOpen(null);
+                          }}
+                          onDownload={() => {
+                            if ("telegramStorageId" in file) {
+                              addDownload(
+                                file._id,
+                                file.name,
+                                file.size,
+                                file.type,
+                                file.telegramStorageId,
+                                file.telegramChunks || []
+                              );
+                            }
+                            setPopoverMenuOpen(null);
+                          }}
+                        />
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

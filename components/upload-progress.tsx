@@ -23,7 +23,8 @@ import {
   AlertCircle, 
   Clock,
   MoreVertical,
-  Trash2
+  Trash2,
+  RotateCcw
 } from 'lucide-react';
 import { useUploadManager, UploadFile } from './upload-manager';
 
@@ -52,58 +53,10 @@ export function UploadProgress() {
     pauseUpload, 
     resumeUpload, 
     cancelUpload, 
+    retryUpload,
     clearCompleted,
     isUploading,
-    totalProgress 
   } = useUploadManager();
-
-  const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
-
-  const getStatusIcon = (status: UploadFile['status']) => {
-    switch (status) {
-      case 'completed':
-        return <CheckCircle className="h-4 w-4 text-green-500" />;
-      case 'error':
-        return <AlertCircle className="h-4 w-4 text-red-500" />;
-      case 'cancelled':
-        return <X className="h-4 w-4 text-gray-500" />;
-      case 'paused':
-        return <Pause className="h-4 w-4 text-yellow-500" />;
-      case 'pending':
-        return <Clock className="h-4 w-4 text-blue-500" />;
-      case 'uploading':
-        return (
-          <div className="h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-        );
-      default:
-        return <Clock className="h-4 w-4 text-gray-500" />;
-    }
-  };
-
-  const getStatusText = (status: UploadFile['status']) => {
-    switch (status) {
-      case 'completed':
-        return 'Completed';
-      case 'error':
-        return 'Failed';
-      case 'cancelled':
-        return 'Cancelled';
-      case 'paused':
-        return 'Paused';
-      case 'pending':
-        return 'Pending';
-      case 'uploading':
-        return 'Uploading';
-      default:
-        return 'Unknown';
-    }
-  };
 
   const activeUploads = uploads.filter(u => 
     u.status === 'uploading' || u.status === 'pending' || u.status === 'paused'
@@ -174,6 +127,7 @@ export function UploadProgress() {
                           onPause={() => pauseUpload(upload.id)}
                           onResume={() => resumeUpload(upload.id)}
                           onCancel={() => cancelUpload(upload.id)}
+                          onRetry={() => retryUpload(upload.id)}
                           onRemove={() => removeUpload(upload.id)}
                         />
                       ))}
@@ -192,6 +146,7 @@ export function UploadProgress() {
                         <UploadItem
                           key={upload.id}
                           upload={upload}
+                          onRetry={() => retryUpload(upload.id)}
                           onRemove={() => removeUpload(upload.id)}
                         />
                       ))}
@@ -212,10 +167,11 @@ interface UploadItemProps {
   onPause?: () => void;
   onResume?: () => void;
   onCancel?: () => void;
+  onRetry?: () => void;
   onRemove: () => void;
 }
 
-function UploadItem({ upload, onPause, onResume, onCancel, onRemove }: UploadItemProps) {
+function UploadItem({ upload, onPause, onResume, onCancel, onRetry, onRemove }: UploadItemProps) {
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return '0 Bytes';
     const k = 1024;
@@ -245,23 +201,32 @@ function UploadItem({ upload, onPause, onResume, onCancel, onRemove }: UploadIte
     }
   };
 
-  const getStatusText = (status: UploadFile['status']) => {
-    switch (status) {
-      case 'completed':
-        return 'Completed';
-      case 'error':
-        return 'Failed';
-      case 'cancelled':
-        return 'Cancelled';
-      case 'paused':
-        return 'Paused';
-      case 'pending':
-        return 'Pending';
-      case 'uploading':
-        return 'Uploading';
-      default:
-        return 'Unknown';
+  const getStatusText = (status: UploadFile['status'], retryCount?: number) => {
+    const baseStatus = (() => {
+      switch (status) {
+        case 'completed':
+          return 'Completed';
+        case 'error':
+          return 'Failed';
+        case 'cancelled':
+          return 'Cancelled';
+        case 'paused':
+          return 'Paused';
+        case 'pending':
+          return 'Pending';
+        case 'uploading':
+          return 'Uploading';
+        default:
+          return 'Unknown';
+      }
+    })();
+    
+    // Add retry count if applicable
+    if (retryCount && retryCount > 0 && (status === 'error' || status === 'pending' || status === 'uploading')) {
+      return `${baseStatus} (Retry ${retryCount})`;
     }
+    
+    return baseStatus;
   };
 
   return (
@@ -274,7 +239,7 @@ function UploadItem({ upload, onPause, onResume, onCancel, onRemove }: UploadIte
             {upload.name}
           </p>
           <span className="text-xs text-gray-500">
-            {getStatusText(upload.status)}
+            {getStatusText(upload.status, upload.retryCount)}
           </span>
         </div>
         
@@ -321,7 +286,25 @@ function UploadItem({ upload, onPause, onResume, onCancel, onRemove }: UploadIte
 
         {/* Error Message */}
         {upload.status === 'error' && upload.error && (
-          <p className="text-xs text-red-500 mt-1">{upload.error}</p>
+          <div className="mt-1">
+            <p className="text-xs text-red-500">{upload.error}</p>
+            {upload.retryCount && upload.retryCount > 0 && (
+              <p className="text-xs text-gray-400 mt-1">
+                Retry attempts: {upload.retryCount}
+              </p>
+            )}
+            {onRetry && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onRetry}
+                className="mt-2 h-6 px-2 text-xs"
+              >
+                <RotateCcw className="h-3 w-3 mr-1" />
+                Retry Upload
+              </Button>
+            )}
+          </div>
         )}
       </div>
 
@@ -343,6 +326,12 @@ function UploadItem({ upload, onPause, onResume, onCancel, onRemove }: UploadIte
             <DropdownMenuItem onClick={onResume}>
               <Play className="h-4 w-4 mr-2" />
               Resume
+            </DropdownMenuItem>
+          )}
+          {upload.status === 'error' && onRetry && (
+            <DropdownMenuItem onClick={onRetry}>
+              <RotateCcw className="h-4 w-4 mr-2" />
+              Retry
             </DropdownMenuItem>
           )}
           {(upload.status === 'uploading' || upload.status === 'paused' || upload.status === 'pending') && onCancel && (

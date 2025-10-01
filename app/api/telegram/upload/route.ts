@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { telegramStorage, CHUNK_SIZE } from '@/lib/telegram';
+import { telegramStorage } from '@/lib/telegram';
 
 // Backward-compatible: accepts full file upload but will process in chunks server-side
 export async function POST(request: NextRequest) {

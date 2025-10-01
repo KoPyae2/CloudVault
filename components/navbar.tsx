@@ -1,11 +1,12 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { UploadProgress } from "./upload-progress";
-import { Cloud, Home, ChevronRight, Wifi, User, Settings, LogOut } from "lucide-react";
+import { DownloadProgress } from "./download-progress";
+import { Cloud, Home, ChevronRight, Wifi, WifiOff, User, Settings, LogOut } from "lucide-react";
 import { signOut } from "next-auth/react";
 import { useStore } from "@/lib/store";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -29,6 +30,27 @@ interface NavbarProps {
 
 export function Navbar({ session, folderPath }: NavbarProps) {
   const setCurrentFolderId = useStore(s => s.setCurrentFolderId);
+  const [isOnline, setIsOnline] = useState(true);
+
+  // Initialize online status and set up event listeners
+  useEffect(() => {
+    // Set initial status
+    setIsOnline(navigator.onLine);
+
+    // Event handlers
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    // Add event listeners
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // Cleanup
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   const goRoot = () => setCurrentFolderId(undefined);
   const goToCrumb = (id: string | number) => setCurrentFolderId(id as Id<'folders'>);
@@ -49,7 +71,7 @@ export function Navbar({ session, folderPath }: NavbarProps) {
               <Home className="h-4 w-4 text-emerald-600" />
               <span className="ml-1">My Files</span>
             </button>
-            {folderPath.map((folder, idx) => (
+            {folderPath.map((folder) => (
               <React.Fragment key={String(folder._id)}>
                 <ChevronRight className="h-4 w-4" />
                 <button
@@ -66,13 +88,25 @@ export function Navbar({ session, folderPath }: NavbarProps) {
 
         {/* Right side - User menu */}
         <div className="flex items-center space-x-4">
-          <div className="hidden sm:flex items-center space-x-2 text-sm text-gray-500">
-            <Wifi className="h-4 w-4 text-emerald-600" />
-            <span>Online</span>
+          <div className="hidden sm:flex items-center space-x-2 text-sm">
+            {isOnline ? (
+              <>
+                <Wifi className="h-4 w-4 text-emerald-600" />
+                <span className="text-emerald-600">Online</span>
+              </>
+            ) : (
+              <>
+                <WifiOff className="h-4 w-4 text-red-500" />
+                <span className="text-red-500">Offline</span>
+              </>
+            )}
           </div>
 
           {/* Upload Progress */}
           <UploadProgress />
+          
+          {/* Download Progress */}
+          <DownloadProgress />
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

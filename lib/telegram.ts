@@ -4,6 +4,17 @@ const TELEGRAM_BOT_TOKEN = process.env.NEXT_TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHANNEL_ID = process.env.NEXT_TELEGRAM_CHANNEL_ID;
 export const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
 
+// Extended RequestInit interface for Node.js-specific fetch options
+interface NodeRequestInit extends RequestInit {
+  timeout?: number;
+  highWaterMark?: number;
+}
+
+// Interface for Node.js fetch errors that include a code property
+interface NodeFetchError extends Error {
+  code?: string;
+}
+
 export interface TelegramChunk {
   chunkId: string;
   chunkIndex: number;
@@ -28,6 +39,12 @@ export interface TelegramMessage {
     file_unique_id: string;
     file_size: number;
   };
+}
+
+export interface TelegramApiResponse<T = unknown> {
+  ok: boolean;
+  result?: T;
+  description?: string;
 }
 
 export class TelegramStorage {
@@ -71,9 +88,9 @@ export class TelegramStorage {
       // Per-attempt controller to support timeout and external abort
       const controller = new AbortController();
       const { signal: externalSignal, timeoutMs = 60000, ...rest } = init;
-      let timeoutId: any;
+      let timeoutId: NodeJS.Timeout | undefined;
 
-      const onAbort = () => controller.abort();
+      const onAbort: EventListener = () => controller.abort();
       try {
         if (externalSignal) {
           if (externalSignal.aborted) controller.abort();
@@ -81,8 +98,23 @@ export class TelegramStorage {
         }
 
         timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-        const res = await fetch(url, { ...rest, signal: controller.signal });
-        clearTimeout(timeoutId);
+        
+        // Configure fetch with longer connection timeout for Node.js
+        const fetchOptions: NodeRequestInit = { 
+          ...rest, 
+          signal: controller.signal,
+          // Add keepalive and longer timeouts for better reliability
+          keepalive: true,
+        };
+        
+        // For Node.js environments, set additional timeout options
+        if (typeof process !== 'undefined' && process.versions?.node) {
+          fetchOptions.timeout = timeoutMs;
+          fetchOptions.highWaterMark = 16384;
+        }
+        
+        const res = await fetch(url, fetchOptions);
+        if (timeoutId) clearTimeout(timeoutId);
 
         if (res.ok) return res;
 
@@ -100,15 +132,38 @@ export class TelegramStorage {
         }
         await this.sleep(Math.min(delay, 15000), externalSignal);
       } catch (err) {
-        clearTimeout(timeoutId);
-        // Abort by caller: rethrow immediately
-        if (externalSignal?.aborted) throw err;
+        if (timeoutId) clearTimeout(timeoutId);
+        
+        // Check if this was an external abort (user cancelled) vs internal timeout
+        if (externalSignal?.aborted) {
+          console.log(`[Telegram] Upload aborted by user`);
+          throw err;
+        }
+        
+        // If this is an AbortError but external signal is not aborted, 
+        // it means our internal timeout fired - treat as retryable error
+        if (err instanceof Error && err.name === 'AbortError') {
+          console.log(`[Telegram] Request timed out after ${timeoutMs}ms, attempt ${attempt + 1}/${retries + 1}`);
+        } else if (err instanceof Error && (err as NodeFetchError).code === 'UND_ERR_CONNECT_TIMEOUT') {
+          console.log(`[Telegram] Connection timeout (${(err as NodeFetchError).code}), attempt ${attempt + 1}/${retries + 1}. Retrying with longer delay...`);
+        } else if (err instanceof Error && err.message.includes('fetch failed')) {
+          console.log(`[Telegram] Network/connection error on attempt ${attempt + 1}/${retries + 1}:`, err.message);
+        } else {
+          console.log(`[Telegram] Network error on attempt ${attempt + 1}/${retries + 1}:`, err);
+        }
+        
         // Network error/timeout: backoff and retry
         if (attempt === retries) throw err;
-        const delay = baseDelayMs * Math.pow(2, attempt) + Math.floor(Math.random() * 250);
-        await this.sleep(Math.min(delay, 15000), externalSignal);
+        
+        // Use longer delay for connection timeouts
+        let delay = baseDelayMs * Math.pow(2, attempt) + Math.floor(Math.random() * 250);
+        if (err instanceof Error && (err as NodeFetchError).code === 'UND_ERR_CONNECT_TIMEOUT') {
+          delay = Math.max(delay, 5000); // Minimum 5 second delay for connection timeouts
+        }
+        
+        await this.sleep(Math.min(delay, 30000), externalSignal); // Increased max delay to 30s
       } finally {
-        if (externalSignal) externalSignal.removeEventListener?.('abort', onAbort as any);
+        if (externalSignal) externalSignal.removeEventListener?.('abort', onAbort);
       }
     }
     throw new Error('Retry attempts exhausted');
@@ -143,7 +198,7 @@ export class TelegramStorage {
     );
 
     const text = await response.text();
-    let result: any;
+    let result: TelegramApiResponse<TelegramMessage>;
     try { result = JSON.parse(text); } catch {
       if (!response.ok) throw new Error(`Telegram API non-JSON error: ${text || response.status}`);
       throw new Error('Telegram API returned malformed JSON');
@@ -164,7 +219,7 @@ export class TelegramStorage {
     );
 
     const text = await response.text();
-    let result: any;
+    let result: TelegramApiResponse<TelegramFile>;
     try { result = JSON.parse(text); } catch {
       if (!response.ok) throw new Error(`Failed to get file info: ${text || response.status}`);
       throw new Error('Telegram getFile returned malformed JSON');

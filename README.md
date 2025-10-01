@@ -118,7 +118,6 @@ Environment variables must be configured in your hosting provider.
 - Use HTTPS everywhere in production and secure your env vars.
 
 ## Roadmap Ideas
-- Public share links with scoped access
 - Full‑text search on metadata
 - Mobile PWA and offline queueing
 

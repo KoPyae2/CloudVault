@@ -9,7 +9,7 @@ import { api } from "@/convex/_generated/api";
 
 export default function HomePage() {
   const { data: session, status } = useSession();
-  const [convexUser, setConvexUser] = useState<any>(null);
+  const [convexUser, setConvexUser] = useState<unknown>(null);
   const router = useRouter();
   const createOrUpdateUser = useMutation(api.users.createOrUpdateUser);
    const getUserByGoogleId = useQuery(

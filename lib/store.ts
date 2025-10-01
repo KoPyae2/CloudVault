@@ -146,13 +146,13 @@ export const useStore = create<StoreState>()(
       setCurrentFolderId: (id) => set({ currentFolderId: id }),
 
       listFoldersIn: (parentId) => {
-        const { folders } = get();
-        return Object.values(folders).filter((f) => String(f.parentId || '') === String(parentId || ''));
+        const state = get();
+        return Object.values(state.folders).filter((f) => String(f.parentId || '') === String(parentId || ''));
       },
 
       listFilesIn: (folderId) => {
-        const { files } = get();
-        return Object.values(files).filter((f) => String(f.folderId || '') === String(folderId || ''));
+        const state = get();
+        return Object.values(state.files).filter((f) => String(f.folderId || '') === String(folderId || ''));
       },
     }),
     {

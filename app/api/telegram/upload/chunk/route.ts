@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { telegramStorage, CHUNK_SIZE } from '@/lib/telegram';
 
-interface ChunkPayload {
-  fileId: string;
-  chunkIndex: number;
-  totalChunks: number;
-  filename: string;
-}
+// interface ChunkPayload {
+//   fileId: string;
+//   chunkIndex: number;
+//   totalChunks: number;
+//   filename: string;
+// }
 
 export async function POST(request: NextRequest) {
   try {
